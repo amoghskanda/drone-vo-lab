@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drone-vo-lab"
+version = "0.1.0"
+description = "Reproducible RGB-D visual odometry stress tests in MuJoCo"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "numpy>=1.26,<3",
+  "opencv-python-headless>=4.10,<5",
+  "mujoco>=3.2,<4",
+  "matplotlib>=3.9,<4",
+  "imageio[ffmpeg]>=2.35,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11"]
+
+[project.scripts]
+drone-vo = "drone_vo_lab.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["drone_vo_lab*"]
+
+[tool.setuptools.package-data]
+drone_vo_lab = ["report.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["render: requires a working OpenGL context"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]

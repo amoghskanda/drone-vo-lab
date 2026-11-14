@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Drone VO Lab · experiment report</title>
+    <meta
+      name="description"
+      content="Reproducible RGB-D visual odometry experiments with controlled sensor failures and ground-truth trajectory evaluation."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d131b;
+        --panel: #141d28;
+        --edge: #293646;
+        --text: #e7edf5;
+        --muted: #96a7ba;
+        --blue: #5daeff;
+        --green: #deed8b;
+        --orange: #ff9a79;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.65 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        max-width: 1180px;
+        margin: auto;
+        padding: 36px 28px 80px;
+      }
+      a {
+        color: var(--green);
+        text-underline-offset: 4px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 0 22px;
+        border-bottom: 1px solid var(--edge);
+      }
+      .brand {
+        font-size: 12px;
+        font-weight: 750;
+        letter-spacing: 0.19em;
+      }
+      .tag {
+        font:
+          11px ui-monospace,
+          monospace;
+        color: var(--muted);
+        border: 1px solid var(--edge);
+        padding: 5px 10px;
+        border-radius: 4px;
+      }
+      .eyebrow {
+        font:
+          11px ui-monospace,
+          monospace;
+        letter-spacing: 0.16em;
+        color: var(--green);
+        margin: 44px 0 14px;
+      }
+      h1 {
+        font-size: clamp(35px, 5.3vw, 62px);
+        line-height: 1.08;
+        letter-spacing: -0.055em;
+        font-weight: 650;
+        max-width: 840px;
+        margin: 0 0 22px;
+      }
+      h1 span {
+        color: var(--muted);
+      }
+      .intro {
+        color: var(--muted);
+        max-width: 710px;
+        font-size: 17px;
+      }
+      .links {
+        display: flex;
+        gap: 24px;
+        margin: 24px 0 34px;
+        font-size: 13px;
+      }
+      .controls {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        margin: 18px 0 22px;
+      }
+      label {
+        font:
+          11px ui-monospace,
+          monospace;
+        color: var(--muted);
+        letter-spacing: 0.06em;
+        display: grid;
+        gap: 8px;
+      }
+      select,
+      button {
+        font:
+          13px ui-sans-serif,
+          system-ui;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--edge);
+        padding: 10px 13px;
+        border-radius: 5px;
+      }
+      select {
+        min-width: 150px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover,
+      select:focus-visible {
+        border-color: var(--green);
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--green);
+        outline-offset: 3px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin: 18px 0;
+      }
+      .metric {
+        background: var(--panel);
+        border: 1px solid var(--edge);
+        padding: 18px;
+        border-radius: 6px;
+      }
+      .metric p {
+        font:
+          10px ui-monospace,
+          monospace;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 0 0 12px;
+      }
+      .metric strong {
+        font-size: 22px;
+        letter-spacing: -0.04em;
+        font-weight: 550;
+      }
+      .metric small {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 8px;
+      }
+      .blue {
+        color: var(--blue);
+      }
+      .green {
+        color: var(--green);
+      }
+      .viewer {
+        border: 1px solid var(--edge);
+        border-radius: 8px;
+        overflow: hidden;
+        background: linear-gradient(160deg, #172331, #101720);
+      }
+      .viewer-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--edge);
+        font-size: 12px;
+      }
+      .legend {
+        display: flex;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 6px;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 410px;
+        touch-action: none;
+        cursor: grab;
+      }
+      canvas:active {
+        cursor: grabbing;
+      }
+      .timeline {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 0 20px 20px;
+      }
+      .timeline input {
+        flex: 1;
+        min-width: 60px;
+        accent-color: var(--green);
+      }
+      .timeline output {
+        font:
+          12px ui-monospace,
+          monospace;
+        color: var(--muted);
+        min-width: 60px;
+      }
+      .note {
+        font-size: 12px;
+        color: var(--muted);
+        margin: 12px 0 28px;
+      }
+      .two {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        gap: 32px;
+        margin-top: 36px;
+      }
+      h2 {
+        font-size: 21px;
+        letter-spacing: -0.035em;
+        font-weight: 600;
+        margin: 0 0 14px;
+      }
+      h3 {
+        font-size: 14px;
+        font-weight: 650;
+        margin-top: 22px;
+      }
+      .copy {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .copy p {
+        margin: 0 0 14px;
+      }
+      .copy code {
+        color: var(--text);
+        font-size: 12px;
+      }
+      video {
+        width: 100%;
+        border-radius: 6px;
+        border: 1px solid var(--edge);
+        background: #080e15;
+      }
+      .plot {
+        width: 100%;
+        margin-top: 15px;
+        border: 1px solid var(--edge);
+        border-radius: 6px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      th,
+      td {
+        padding: 11px 9px;
+        border-bottom: 1px solid var(--edge);
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      th {
+        font-weight: 500;
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .table-scroll {
+        overflow: auto;
+        margin: 14px 0 30px;
+      }
+      details {
+        border: 1px solid var(--edge);
+        border-radius: 6px;
+        padding: 15px 20px;
+        margin-top: 25px;
+      }
+      summary {
+        cursor: pointer;
+        font-size: 13px;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font:
+          11px/1.8 ui-monospace,
+          monospace;
+        color: var(--muted);
+      }
+      footer {
+        border-top: 1px solid var(--edge);
+        margin-top: 46px;
+        padding-top: 20px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      @media (max-width: 740px) {
+        main {
+          padding: 22px 16px 50px;
+        }
+        .metrics {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .two {
+          grid-template-columns: 1fr;
+        }
+        canvas {
+          height: 320px;
+        }
+        .viewer-head {
+          align-items: flex-start;
+          gap: 12px;
+          flex-direction: column;
+        }
+        .metric strong {
+          font-size: 20px;
+        }
+        .links {
+          gap: 16px;
+        }
+        .tag {
+          font-size: 9px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand">DRONE VO LAB</div>
+        <div class="tag">MUJOCO + OPENCV / v0.1</div>
+      </header>
+      <p class="eyebrow">PERCEPTION / STATE ESTIMATION / EVALUATION</p>
+      <h1>When does visual odometry<br /><span>lose its way?</span></h1>
+      <p class="intro">
+        A small, reproducible RGB-D odometry testbed. Replay a camera flight,
+        degrade its sensor stream, and measure what happens to the estimated
+        trajectory.
+      </p>
+      <div class="links">
+        <a href="results.csv" download>Download metrics ↗</a
+        ><a href="results.json">Experiment manifest ↗</a
+        ><a href="demo.mp4">Watch recorded replay ↗</a>
+      </div>
+      <div class="controls">
+        <label>SCENE<select id="scene"></select></label
+        ><label>SEED<select id="seed"></select></label
+        ><label>SENSOR CONDITION<select id="condition"></select></label>
+      </div>
+      <p id="case-description" class="note"></p>
+      <div class="metrics" id="metrics"></div>
+      <div class="viewer">
+        <div class="viewer-head">
+          <span
+            >Trajectory replay
+            <span style="color: var(--muted)">/ drag to orbit</span></span
+          >
+          <div class="legend">
+            <span
+              ><i class="dot" style="background: #c7d1da"></i>Ground truth</span
+            ><span class="blue"
+              ><i class="dot" style="background: var(--blue)"></i>Baseline</span
+            ><span class="green"
+              ><i class="dot" style="background: var(--green)"></i>Checked</span
+            >
+          </div>
+        </div>
+        <canvas
+          id="trajectory"
+          aria-label="Interactive 3D comparison of ground truth and estimated camera trajectories"
+          role="img"
+        ></canvas>
+        <div class="timeline">
+          <button id="play" aria-label="Play trajectory replay">Play</button
+          ><input
+            id="scrub"
+            type="range"
+            min="0"
+            max="1000"
+            value="1000"
+            aria-label="Trajectory replay time"
+          /><output id="time"></output><button id="reset">Reset view</button>
+        </div>
+      </div>
+      <p class="note">
+        Both estimators use the same input frames. Rejected updates hold the
+        previous pose and remain in the position error. Initial camera-frame
+        alignment only.
+      </p>
+      <div class="two">
+        <section id="sensor-replay">
+          <h2>See the sensor stream</h2>
+          <video controls playsinline preload="metadata" poster="preview.png">
+            <source src="demo.mp4" type="video/mp4" />
+          </video>
+          <p class="note">
+            Four conditions on the first scene and seed. The RGB image shows
+            tracks used by the checked estimator. Camera motion is prescribed,
+            not autonomously controlled.
+          </p>
+        </section>
+        <section class="copy">
+          <h2>What is being compared?</h2>
+          <p>
+            <span class="blue">Baseline</span> detects Shi-Tomasi corners in
+            every previous frame, tracks them with pyramidal Lucas-Kanade,
+            backprojects metric depth, and estimates motion with RANSAC PnP and
+            pose refinement.
+          </p>
+          <p>
+            <span class="green">Checked</span> uses the same pipeline, with
+            forward/backward flow rejection and minimum inlier-count and
+            inlier-ratio checks. Neither configuration is assumed to win.
+          </p>
+          <p>
+            Both accumulate camera motion in SE(3). The estimator receives only
+            RGB, depth, and calibration. It has no access to ground-truth poses,
+            scene geometry, or motion commands.
+          </p>
+          <p>
+            There is no loop closure or relocalization. A blackout can leave a
+            lasting offset even after feature tracking resumes.
+          </p>
+        </section>
+      </div>
+      <p class="eyebrow">ALL RUNS / PAIRED EXPERIMENTS</p>
+      <h2>Error and tracking coverage</h2>
+      <p class="copy">
+        Bars show the mean across seeds; whiskers show population standard
+        deviation. Position RMSE includes failed updates. Coverage is accepted
+        motion updates divided by attempted updates, excluding initialization.
+      </p>
+      <img
+        class="plot"
+        src="summary.png"
+        alt="Position error and tracking coverage across both estimators and sensor conditions, grouped by scene"
+      />
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Condition</th>
+              <th>Estimator</th>
+              <th>Position RMSE / m</th>
+              <th>Rotation RMSE / °</th>
+              <th>Coverage</th>
+              <th>Median / ms</th>
+              <th>P95 / ms</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <section class="copy">
+        <h2>Scope and limitations</h2>
+        <p>
+          This is a synthetic RGB-D visual-odometry benchmark with classical
+          computer vision. It is not a monocular SLAM system, a learned policy,
+          a flight controller, or a real-world drone deployment.
+        </p>
+        <p>
+          Depth is ideal simulator axial depth. Blur is a post-render horizontal
+          filter, not a physical shutter model. Frame drops remove synchronized
+          RGB-D pairs; the original timestamps are preserved. All scenes and
+          trajectories are procedural.
+        </p>
+        <p>
+          Timing measures estimator work on the recorded machine, excluding
+          image rendering, corruption, plotting, and video encoding. It is not
+          an onboard-compute guarantee. Numerical results may vary across OpenCV
+          versions and render backends.
+        </p>
+      </section>
+      <details>
+        <summary>Reproduction settings and environment</summary>
+        <pre id="manifest"></pre>
+      </details>
+      <footer>
+        Drone VO Lab · original procedural scenes · inspect the per-frame CSVs
+        in <code>trajectories/</code> to audit every accepted and rejected
+        update.
+      </footer>
+    </main>
+    <script id="experiment-data" type="application/json">
+      __EXPERIMENT_DATA__
+    </script>
+    <script>
+      const data = JSON.parse(
+        document.getElementById("experiment-data").textContent,
+      );
+      const $ = (id) => document.getElementById(id),
+        scene = $("scene"),
+        seed = $("seed"),
+        condition = $("condition");
+      const unique = (items) => [...new Set(items)],
+        label = (s) => s.replaceAll("_", " ");
+      function options(el, items) {
+        const old = el.value;
+        el.replaceChildren(
+          ...items.map((value) => new Option(label(String(value)), value)),
+        );
+        if (items.map(String).includes(old)) el.value = old;
+      }
+      options(scene, unique(data.runs.map((r) => r.scene)));
+      options(condition, Object.keys(data.metadata.cases));
+      let active = [],
+        playing = false,
+        lastTime = 0,
+        progress = 1,
+        yaw = -0.62,
+        pitch = 0.92,
+        zoom = 1;
+      function choose() {
+        options(
+          seed,
+          unique(
+            data.runs.filter((r) => r.scene === scene.value).map((r) => r.seed),
+          ),
+        );
+        update();
+      }
+      function update() {
+        playing = false;
+        $("play").textContent = "Play";
+        progress = 1;
+        $("scrub").value = 1000;
+        active = data.flights.filter(
+          (f) =>
+            f.scene === scene.value &&
+            String(f.seed) === seed.value &&
+            f.case === condition.value,
+        );
+        $("case-description").textContent =
+          data.metadata.cases[condition.value];
+        const runs = data.runs.filter(
+          (r) =>
+            r.scene === scene.value &&
+            String(r.seed) === seed.value &&
+            r.case === condition.value,
+        );
+        const b = runs.find((r) => r.estimator === "baseline"),
+          c = runs.find((r) => r.estimator === "checked");
+        const cards = [
+          ["POSITION RMSE / m", "position_rmse_m", (v) => v.toFixed(3)],
+          ["ROTATION RMSE / deg", "rotation_rmse_deg", (v) => v.toFixed(2)],
+          [
+            "TRACKING COVERAGE",
+            "tracking_coverage",
+            (v) => (v * 100).toFixed(0) + "%",
+          ],
+          [
+            "MEDIAN PROCESSING / ms",
+            "median_processing_ms",
+            (v) => v.toFixed(2),
+          ],
+        ];
+        $("metrics").innerHTML = cards
+          .map(
+            ([name, key, fmt]) =>
+              `<div class="metric"><p>${name}</p><strong><span class="blue">${fmt(b[key])}</span> <span style="color:#536276;font-size:16px">/</span> <span class="green">${fmt(c[key])}</span></strong><small>baseline / checked</small></div>`,
+          )
+          .join("");
+        $("rows").innerHTML = data.runs
+          .filter(
+            (r) => r.scene === scene.value && String(r.seed) === seed.value,
+          )
+          .map(
+            (r) =>
+              `<tr><td>${label(r.case)}</td><td class="${r.estimator === "baseline" ? "blue" : "green"}">${r.estimator}</td><td>${r.position_rmse_m.toFixed(3)}</td><td>${r.rotation_rmse_deg.toFixed(2)}</td><td>${(r.tracking_coverage * 100).toFixed(1)}%</td><td>${r.median_processing_ms.toFixed(2)}</td><td>${r.p95_processing_ms.toFixed(2)}</td></tr>`,
+          )
+          .join("");
+        draw();
+      }
+      scene.addEventListener("change", choose);
+      seed.addEventListener("change", update);
+      condition.addEventListener("change", update);
+      $("manifest").textContent = JSON.stringify(data.metadata, null, 2);
+      const canvas = $("trajectory"),
+        ctx = canvas.getContext("2d");
+      function draw() {
+        if (!active.length) return;
+        const rect = canvas.getBoundingClientRect(),
+          dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+        const w = rect.width,
+          h = rect.height;
+        const rotate = (p) => {
+          const x = p[0],
+            y = p[1] + 0.8,
+            z = p[2] - 1;
+          const xx = Math.cos(yaw) * x - Math.sin(yaw) * y,
+            yy = Math.sin(yaw) * x + Math.cos(yaw) * y;
+          return [xx, yy * Math.cos(pitch) - z * Math.sin(pitch)];
+        };
+        const bounds = active.flatMap((flight) =>
+          flight.estimated.concat(flight.truth),
+        );
+        bounds.push([-5, -5, 0], [-5, 6, 0], [5, -5, 0], [5, 6, 0]);
+        const projected = bounds.map(rotate);
+        const minX = Math.min(...projected.map((p) => p[0]));
+        const maxX = Math.max(...projected.map((p) => p[0]));
+        const minY = Math.min(...projected.map((p) => p[1]));
+        const maxY = Math.max(...projected.map((p) => p[1]));
+        const scale =
+          Math.min(
+            (w - 80) / Math.max(maxX - minX, 1),
+            (h - 90) / Math.max(maxY - minY, 1),
+          ) * zoom;
+        const project = (point) => {
+          const [x, y] = rotate(point);
+          return [
+            w / 2 + (x - (minX + maxX) / 2) * scale,
+            h / 2 + (y - (minY + maxY) / 2) * scale,
+          ];
+        };
+        function line(points, color, width = 1, dash = []) {
+          ctx.beginPath();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = width;
+          ctx.setLineDash(dash);
+          points.forEach((p, i) => {
+            const q = project(p);
+            i ? ctx.lineTo(...q) : ctx.moveTo(...q);
+          });
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        for (let x = -5; x <= 5; x++)
+          line(
+            [
+              [x, -5, 0],
+              [x, 6, 0],
+            ],
+            "#263545",
+          );
+        for (let y = -5; y <= 6; y++)
+          line(
+            [
+              [-5, y, 0],
+              [5, y, 0],
+            ],
+            "#263545",
+          );
+        line(
+          [
+            [0, -5, 0],
+            [0, -5, 3],
+          ],
+          "#3b4d60",
+        );
+        const base = active[0],
+          last = base.time.at(-1),
+          t = base.time[0] + progress * (last - base.time[0]);
+        line(base.truth, "#465361", 1.5, [4, 5]);
+        for (const flight of active) {
+          let n = flight.time.findIndex((v) => v > t);
+          if (n < 0) n = flight.time.length;
+          n = Math.max(1, n);
+          if (flight === base) line(flight.truth.slice(0, n), "#c7d1da", 2);
+          const color = flight.estimator === "baseline" ? "#5daeff" : "#deed8b";
+          line(flight.estimated.slice(0, n), color, 2.3);
+          const p = project(flight.estimated[n - 1]);
+          ctx.beginPath();
+          ctx.arc(...p, flight.accepted[n - 1] ? 4 : 6, 0, 2 * Math.PI);
+          ctx.fillStyle = flight.accepted[n - 1] ? color : "#ff9a79";
+          ctx.fill();
+        }
+        ctx.font = "11px ui-monospace,monospace";
+        ctx.fillStyle = "#91a3b7";
+        ctx.fillText("WORLD FRAME / METERS", 20, 28);
+        ctx.fillText("Drag to orbit · scroll to zoom", 20, h - 18);
+        $("time").textContent = t.toFixed(2) + " s";
+      }
+      let drag = null;
+      canvas.addEventListener("pointerdown", (e) => {
+        drag = [e.clientX, e.clientY];
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        yaw += (e.clientX - drag[0]) * 0.008;
+        pitch = Math.max(
+          0.12,
+          Math.min(1.5, pitch + (e.clientY - drag[1]) * 0.006),
+        );
+        drag = [e.clientX, e.clientY];
+        draw();
+      });
+      canvas.addEventListener("pointerup", () => (drag = null));
+      canvas.addEventListener("pointercancel", () => (drag = null));
+      canvas.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          zoom = Math.max(
+            0.6,
+            Math.min(2.2, zoom * Math.exp(-e.deltaY * 0.001)),
+          );
+          draw();
+        },
+        { passive: false },
+      );
+      $("reset").addEventListener("click", () => {
+        yaw = -0.62;
+        pitch = 0.92;
+        zoom = 1;
+        draw();
+      });
+      $("scrub").addEventListener("input", (e) => {
+        progress = e.target.value / 1000;
+        draw();
+      });
+      $("play").addEventListener("click", () => {
+        playing = !playing;
+        if (playing && progress >= 1) progress = 0;
+        $("play").textContent = playing ? "Pause" : "Play";
+        lastTime = performance.now();
+      });
+      function animate(time) {
+        if (playing && active.length) {
+          progress = Math.min(
+            1,
+            progress +
+              (time - lastTime) / (1000 * Math.max(active[0].time.at(-1), 1)),
+          );
+          $("scrub").value = progress * 1000;
+          draw();
+          if (progress >= 1) {
+            playing = false;
+            $("play").textContent = "Play";
+          }
+        }
+        lastTime = time;
+        requestAnimationFrame(animate);
+      }
+      window.addEventListener("resize", draw);
+      choose();
+      requestAnimationFrame(animate);
+    </script>
+  </body>
+</html>
