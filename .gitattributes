@@ -8,3 +8,4 @@
 *.png binary
 *.gif binary
 *.mp4 binary
+artifacts/index.html linguist-generated=true

@@ -20,12 +20,21 @@ cd drone-vo-lab
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
-drone-vo benchmark --quick
+drone-vo benchmark --quick --output runs/demo
+open runs/demo/index.html
 ```
 
-Open `runs/latest/index.html` directly in your browser. The report has an orbitable 3D trajectory replay, a time scrubber, scene/seed/condition selectors, metrics, and a recorded RGB replay. It uses local files and does not need a server or a network connection.
+The command above opens the report in your browser. Without `--output`, the benchmark creates a timestamped folder under `runs/` and prints the report path. The report has an orbitable 3D trajectory replay, a time scrubber, scene/seed/condition selectors, metrics, and a recorded RGB replay. It uses local files and does not need a server or a network connection.
 
 `requirements-lock.txt` records the exact dependencies used for the committed run. To use them, install with `pip install -r requirements-lock.txt` before the editable install.
+
+Set the frame-drop interval with `--frame-interval`. For example, `--frame-interval 2` keeps frames 0, 2, 4, and so on:
+
+```bash
+drone-vo benchmark --quick --frame-interval 2
+```
+
+The interval must be positive and leave at least two frames. The selected interval is recorded in the output metadata.
 
 Reproduce the full experiment:
 
@@ -33,7 +42,7 @@ Reproduce the full experiment:
 drone-vo benchmark --output runs/full --scenes warehouse low_texture --seeds 0 1 2
 ```
 
-This captures six 180-frame sequences at 320 × 240 and 15 Hz, then evaluates two estimators under four conditions, for 48 estimator runs. Each complete camera trajectory covers about 15 meters. The frame-drop case keeps every fourth observation with its original timestamp.
+This captures six 180-frame sequences at 320 × 240 and 15 Hz, then evaluates two estimators under four conditions, for 48 estimator runs. Each complete camera trajectory covers about 15 meters. By default, the frame-drop case keeps every fourth observation with its original timestamp.
 
 On a Linux machine without a display, configure an available MuJoCo rendering backend before running. The CI workflow uses software OSMesa:
 
@@ -57,7 +66,7 @@ There is no claim that the checked variant always wins. It rejects some unsuppor
 | --- | --- |
 | Clean | Original synchronized RGB-D |
 | Motion blur | Horizontal 21-pixel box filter on RGB |
-| Frame drop | Keep one synchronized RGB-D pair out of every four |
+| Frame drop | Keep every Nth synchronized RGB-D pair; N defaults to 4 |
 | Blackout | Replace RGB with black during 40–55% of the trajectory |
 
 The warehouse and low-texture scenes share the same layout. The latter removes checkerboard flooring and wall markers and reduces box color variation. Random seeds change scene appearance and camera path phase. These are procedural test scenes, not independent real-world datasets.
@@ -74,7 +83,7 @@ The generated report saves environment versions, parameters, all per-frame estim
 
 ## Results
 
-The committed experiment contains **48 runs across two scenes and three seeds**, recorded on an Apple M5 with OpenCV restricted to one thread. Values below are the mean of per-run position RMSE over three seeds.
+The committed experiment contains **48 runs across two scenes and three seeds**, recorded with the default frame interval of 4 on an Apple M5 with OpenCV restricted to one thread. Values below are the mean of per-run position RMSE over three seeds.
 
 | Scene and condition | Baseline RMSE | Checked RMSE | Baseline / checked coverage |
 | --- | ---: | ---: | ---: |
