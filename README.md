@@ -1,4 +1,4 @@
-# Drone VO Lab
+# Drone Visual Odometry Lab
 
 **What happens to a drone's visual odometry when its camera blurs, drops frames, or goes dark?**
 
