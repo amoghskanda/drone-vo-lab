@@ -97,7 +97,7 @@ def _text(frame, text, xy, scale=0.5, color=TRUTH, thickness=1):
     cv2.putText(frame, text, xy, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv2.LINE_AA)
 
 
-def render_demo(output: Path, sequence, results: dict, fps: float):
+def render_demo(output: Path, sequence, results: dict, fps: float, frame_interval: int):
     truth = sequence.poses[:, :3, 3]
     relative_truth = inverse(sequence.poses[0])[None] @ sequence.poses
     gif_frames = []
@@ -111,7 +111,7 @@ def render_demo(output: Path, sequence, results: dict, fps: float):
         ffmpeg_log_level="error",
     ) as writer:
         for case in CASES:
-            indices, images = perturb(sequence, case)
+            indices, images = perturb(sequence, case, frame_interval=frame_interval)
             modes = {mode: results[(case, mode)][0] for mode in MODES}
             world = {
                 mode: (sequence.poses[0][None] @ np.array([e.pose for e in modes[mode]]))[:, :3, 3]

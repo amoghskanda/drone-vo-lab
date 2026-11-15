@@ -21,7 +21,7 @@ def fixture_sequence():
 
 def test_frame_drop_preserves_rgb_depth_timestamp_correspondence():
     sequence = fixture_sequence()
-    indices, images = perturb(sequence, "frame_drop")
+    indices, images = perturb(sequence, "frame_drop", 4)
     np.testing.assert_array_equal(indices, [0, 4, 8, 12, 16])
     np.testing.assert_array_equal(images[:, 0, 0, 0], sequence.depth[indices, 0, 0])
     np.testing.assert_allclose(np.diff(sequence.timestamps[indices]), 4 / 15)
@@ -30,7 +30,7 @@ def test_frame_drop_preserves_rgb_depth_timestamp_correspondence():
 def test_blackout_does_not_modify_source_sequence_or_depth():
     sequence = fixture_sequence()
     original = sequence.rgb.copy()
-    indices, images = perturb(sequence, "blackout")
+    indices, images = perturb(sequence, "blackout", 2)
     np.testing.assert_array_equal(sequence.rgb, original)
     assert not images[8:11].any()
     np.testing.assert_array_equal(images[11:], original[11:])

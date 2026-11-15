@@ -16,18 +16,19 @@ from .scene import Sequence, capture
 CASES = {
     "clean": "Unmodified synchronized RGB-D",
     "motion_blur": "21-pixel horizontal RGB box blur; depth unchanged",
-    "frame_drop": "Keep every fourth synchronized RGB-D frame, preserving timestamps",
-    "blackout": "Black RGB frames from 40% to 55% of the flight; depth unchanged",
+    "frame_drop": "Keep every nth synchronized RGB-D frame, preserving timestamps",
+    "blackout": "Black RGB frames from 40 to 55% of the flight; depth unchanged",
 }
 MODES = ("baseline", "checked")
 
 
-def perturb(sequence: Sequence, case: str):
+def perturb(sequence: Sequence, case: str, frame_interval):
     if case not in CASES:
         raise ValueError(f"Unknown corruption: {case}")
     indices = np.arange(len(sequence.rgb))
-    if case == "frame_drop":
-        indices = indices[::4]
+    #customized to take every nth frame.
+    if case == "frame_drop" and frame_interval is not None:
+        indices = indices[::int(frame_interval)]
     images = sequence.rgb[indices].copy()
     if case == "motion_blur":
         kernel = np.zeros((21, 21), dtype=np.float32)
@@ -38,8 +39,8 @@ def perturb(sequence: Sequence, case: str):
     return indices, images
 
 
-def run_sequence(sequence: Sequence, case: str, mode: str) -> tuple[dict, list, np.ndarray]:
-    indices, images = perturb(sequence, case)
+def run_sequence(sequence: Sequence, case: str, mode: str, frame_interval: int) -> tuple[dict, list, np.ndarray]:
+    indices, images = perturb(sequence, case, frame_interval=frame_interval)
     cv2.setRNGSeed(0)
     estimator = RGBDOdometry(sequence.calibration, mode)
     estimates = [
@@ -103,6 +104,7 @@ def run_benchmark(
     width: int = 320,
     height: int = 240,
     video: bool = True,
+    frame_interval: int = 4,
 ):
     from .report import build_report, render_demo
 
@@ -128,7 +130,7 @@ def run_benchmark(
                 demo = (sequence, {})
             for case in CASES:
                 for mode in MODES:
-                    metrics, estimates, indices = run_sequence(sequence, case, mode)
+                    metrics, estimates, indices = run_sequence(sequence, case, mode, frame_interval)
                     rows.append(metrics)
                     stem = f"{scene}-{seed}-{case}-{mode}"
                     save_trajectory(trajectories / f"{stem}.csv", sequence, estimates, indices)
@@ -165,6 +167,7 @@ def run_benchmark(
             "fps": fps,
             "width": width,
             "height": height,
+            "frame interval": frame_interval
         },
         "environment": {
             "platform": platform.platform(),
@@ -193,7 +196,7 @@ def run_benchmark(
         writer.writerows(rows)
     if video and demo is not None:
         print("Encoding demo ...", flush=True)
-        render_demo(output, *demo, fps=fps)
+        render_demo(output, *demo, fps=fps, frame_interval=frame_interval)
     build_report(output, rows, flights, metadata)
     print(f"Report: {(output / 'index.html').resolve()}", flush=True)
     return rows
