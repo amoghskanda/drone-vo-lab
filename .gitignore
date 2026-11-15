@@ -10,3 +10,7 @@ dist/
 build/
 .DS_Store
 MUJOCO_LOG.TXT
+
+# Generated reports and full videos are reproduced locally.
+/artifacts/index.html
+/artifacts/demo.mp4

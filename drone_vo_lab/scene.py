@@ -22,7 +22,6 @@ class Sequence:
     scene: str
     seed: int
 
-
 def scene_xml(seed: int, scene: str = "warehouse") -> str:
     if scene not in {"warehouse", "low_texture"}:
         raise ValueError(f"Unknown scene: {scene}")
