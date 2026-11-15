@@ -1,4 +1,5 @@
 """Frame-to-frame RGB-D odometry. This module has no simulator or truth-pose access."""
+"""references:  Lucas and Kanade, 1981: optical-flow tracking via OpenCV and Lepetit et al., IJCV 2009: EPnP camera pose estimation."""
 
 from dataclasses import dataclass
 from time import perf_counter

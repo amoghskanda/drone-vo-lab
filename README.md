@@ -37,6 +37,28 @@ Both estimator configurations receive exactly the same observations for each con
 
 Depth remains ideal in these experiments. A random seed makes the scene variations and camera path repeatable.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    sim["Simulated camera"] --> conditions["Test conditions"]
+    conditions --> baseline["Baseline VO"]
+    conditions --> checked["Checked VO"]
+    baseline --> compare["Compare paths"]
+    checked --> compare
+    sim -. "Ground truth" .-> compare
+    compare --> results["Results"]
+
+    classDef plain fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef accent fill:#eff6ff,stroke:#2563eb,color:#172554
+    class sim,conditions,baseline,results plain
+    class checked,compare accent
+```
+
+Both estimators receive the same observations. Ground truth is kept outside motion estimation and used to measure error.
+
+See [design decisions](docs/architecture.md) for the reasoning and implementation details.
+
 ## What is being compared?
 
 The **baseline** tracks features and estimates movement using RANSAC PnP, a method that finds camera motion while rejecting feature matches that disagree with it.
@@ -127,6 +149,11 @@ MUJOCO_GL=osmesa drone-vo benchmark --quick --no-video
 On macOS, run with normal Python in a graphical login session. The default renderer requires that session even though the project does not open a simulator window.
 
 </details>
+
+## Learning resources
+
+- [Lucas-Kanade Method | Optical Flow](https://youtu.be/6wMoHgpVUn8). Video explanation of Lucas-Kanade optical flow, the method used for feature tracking in this project.
+- [OpenCV optical-flow tutorial](https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html). An implementation guide for tracking selected features with `cv2.calcOpticalFlowPyrLK()`.
 
 ## Read the code
 
