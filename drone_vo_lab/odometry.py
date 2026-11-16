@@ -1,5 +1,9 @@
-"""Frame-to-frame RGB-D odometry. This module has no simulator or truth-pose access."""
-"""references:  Lucas and Kanade, 1981: optical-flow tracking via OpenCV and Lepetit et al., IJCV 2009: EPnP camera pose estimation."""
+"""Frame-to-frame RGB-D odometry without simulator or truth-pose access.
+
+References:
+    Lucas and Kanade, 1981: optical-flow tracking via OpenCV.
+    Lepetit et al., IJCV 2009: EPnP camera pose estimation.
+"""
 
 from dataclasses import dataclass
 from time import perf_counter
@@ -54,14 +58,33 @@ def estimate_motion(points3d: np.ndarray, pixels: np.ndarray, calibration: np.nd
 
 
 class RGBDOdometry:
-    def __init__(self, calibration: np.ndarray, mode: str = "checked"):
-        if mode not in {"baseline", "checked"}:
+    def __init__(
+        self,
+        calibration: np.ndarray,
+        mode: str = "checked",
+        *,
+        max_recovery_failures: int = 30,
+    ):
+        """Limit recovery attempts before re-anchoring at the held pose.
+
+        The limit counts consecutive rejected observations, not elapsed seconds.
+        Re-anchoring replaces RGB-D references without recovering missing motion.
+        """
+        if mode not in {"baseline", "checked", "recovery"}:
             raise ValueError(f"Unknown estimator: {mode}")
+        if (
+            isinstance(max_recovery_failures, bool)
+            or not isinstance(max_recovery_failures, int)
+            or max_recovery_failures < 1
+        ):
+            raise ValueError("max_recovery_failures must be a positive integer")
+        self.max_recovery_failures = max_recovery_failures
         self.calibration = calibration.copy()
         self.mode = mode
         self.pose = np.eye(4)
         self.previous_gray = None
         self.previous_depth = None
+        self.recovery_failures = 0
 
     def update(self, rgb: np.ndarray, depth: np.ndarray) -> Estimate:
         start = perf_counter()
@@ -93,7 +116,7 @@ class RGBDOdometry:
                 mask = status.ravel().astype(bool) & np.isfinite(current).all(axis=1)
                 mask &= (current[:, 0] >= 1) & (current[:, 0] < w - 1)
                 mask &= (current[:, 1] >= 1) & (current[:, 1] < h - 1)
-                if self.mode == "checked":
+                if self.mode in {"checked", "recovery"}:
                     backward, back_status, _ = cv2.calcOpticalFlowPyrLK(
                         gray,
                         self.previous_gray,
@@ -118,16 +141,33 @@ class RGBDOdometry:
                 # Reject unsupported increments rather than manufacturing a pose.
                 if (
                     transform is not None
-                    and self.mode == "checked"
+                    and self.mode in {"checked", "recovery"}
                     and (len(indices) < 12 or len(indices) / max(len(current), 1) < 0.35)
                 ):
                     transform, reason = None, "low inlier support"
         accepted = transform is not None
+        reanchor = False
         if accepted:
             self.pose = self.pose @ inverse(transform)
-            reason = "tracking"
-        # Failed increments hold the last pose. No truth-based reset or gap interpolation.
-        self.previous_gray, self.previous_depth = gray, depth.copy()
+            reason = (
+                "recovered"
+                if self.mode == "recovery" and self.recovery_failures > 0
+                else "tracking"
+            )
+
+        if self.mode == "recovery":
+            if accepted:
+                self.recovery_failures = 0
+            else:
+                self.recovery_failures += 1
+                if self.recovery_failures >= self.max_recovery_failures:
+                    # Restart local tracking; the missing displacement stays lost.
+                    reanchor = True
+                    self.recovery_failures = 0
+                    reason = f"reanchored after recovery timeout: {reason}"
+
+        if accepted or self.mode != "recovery" or reanchor:
+            self.previous_gray, self.previous_depth = gray, depth.copy()
         elapsed = (perf_counter() - start) * 1000
         return Estimate(
             self.pose.copy(),
