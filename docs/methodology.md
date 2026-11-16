@@ -31,26 +31,32 @@ point_previous = z * inverse(K) * [u, v, 1]
 PnP estimates `T_current_previous` by matching those previous-camera 3D points with tracked current-image pixels. The accumulated camera pose is:
 
 ```text
-T_first_current = T_first_previous * inverse(T_current_previous)
+T_first_current = T_first_reference * inverse(T_current_reference)
 ```
 
-Using the inverse in this composition is essential. The PnP transform moves points between camera coordinates; the reported trajectory describes camera motion.
+For baseline and checked, the reference is the previous observation. Recovery may retain an older reference after rejection. Using the inverse in this composition is essential. The PnP transform moves points between camera coordinates; the reported trajectory describes camera motion.
 
 ## Estimators
 
-Both modes detect up to 500 Shi-Tomasi corners in the previous RGB image, use pyramidal Lucas-Kanade to track them, reject out-of-frame tracks, sample the previous depth image at rounded pixel locations, and reject nonfinite depth and depth outside 0.15–25 meters. No current-frame depth consistency check is applied.
+All modes detect up to 500 Shi-Tomasi corners in the previous RGB image, use pyramidal Lucas-Kanade to track them, reject out-of-frame tracks, sample the previous depth image at rounded pixel locations, and reject nonfinite depth and depth outside 0.15–25 meters. No current-frame depth consistency check is applied.
 
 RANSAC PnP uses EPNP, 150 iterations, 2.5-pixel reprojection threshold, and 0.999 confidence. The pose is refined with Levenberg-Marquardt using the selected inliers. At least six inliers are required for the baseline.
 
 The checked variant additionally rejects forward/backward flow discrepancies of 0.8 pixels or more. It accepts a pose only when at least 12 inliers remain and their fraction of depth-valid tracks is at least 0.35. This variant bundles both checks; it is not an isolated ablation of each check.
 
-If an update fails, the estimator holds its last pose and advances its image/depth reference to the current frame. It does not integrate the missed displacement later or reset to truth. It can therefore resume local tracking while retaining a global offset.
+Baseline and checked hold the last pose after rejection and advance the image/depth reference to the current frame. They do not integrate missed displacement later or reset to truth.
+
+Recovery uses the checked estimator's feature and inlier-support checks. After rejection, it retains both reference image and reference depth together with their associated held pose. A later accepted transform is composed from that retained reference, allowing it to span a gap. The reason is `recovered` if one or more rejections preceded that accepted update; ordinary accepted updates use `tracking`. Previous held poses remain unchanged.
+
+After `max_recovery_failures` consecutive rejected observations, recovery replaces the reference with the current image and depth, resets the failure counter, and leaves the pose held. That update remains rejected and its reason begins `reanchored after recovery timeout`. This explicitly abandons the missing displacement and starts another bounded local-tracking attempt window. If the replacement image is unusable, tracking may continue failing until it can establish a useful reference.
+
+The default limit is 30 observations, not 30 original source frames or a wall-time duration. Frame dropping therefore changes the time span represented by this limit. No mode receives timestamps or ground-truth poses for estimation. Accepted recovery is a validity decision, not verification that the estimated movement is correct; repetitive geometry can produce false matches that pass the checks.
 
 ## Corruptions
 
 - Clean uses original synchronized frames.
 - Motion blur convolves RGB with a horizontal 21-pixel uniform kernel. Depth stays ideal. This approximates image degradation and is not physically simulated motion blur.
-- Frame drop keeps indices `0, 4, 8, ...` for RGB, depth, timestamps, and corresponding evaluation poses. At 15 Hz this gives 3.75 Hz observations. If the final source frame is not retained, its pose is not evaluated.
+- Frame drop keeps every `frame_interval` observation, defaulting to indices `0, 4, 8, ...`, for RGB, depth, timestamps, and corresponding evaluation poses. At 15 Hz this gives 3.75 Hz observations. If the final source frame is not retained, its pose is not evaluated.
 - Blackout replaces RGB images in the integer frame interval `[floor(0.40*N), floor(0.55*N))` with zero. Depth remains available, but the feature-based estimator cannot use depth alone.
 
 ## Metrics
@@ -59,7 +65,9 @@ The true camera trajectory is expressed relative to its first camera frame befor
 
 Position RMSE uses every observed timestamp, including held estimates after failures. Rotation RMSE uses the geodesic rotation angle from the trace of `R_truth.T @ R_estimate`. Final error is the positional error at the last observed timestamp. Path length is the sum of distances between the observed ground-truth positions, so the dropped-frame path length is sampled more sparsely.
 
-Coverage is accepted motion updates divided by attempted updates, excluding the initialization frame. A rejection is not equivalent to a confirmed incorrect pose; it is a conservative validity decision. Report coverage and trajectory error together.
+Coverage is accepted motion updates divided by attempted updates, excluding the initialization frame. In recovery mode an accepted update can span several observations; coverage therefore is not a measure of the proportion of physical displacement recovered.
+
+`recovered_updates` counts accepted updates labeled `recovered`. `reanchors` counts expired references labeled `reanchored after recovery timeout`. These counters come from per-frame reasons and do not use truth poses. Neither is an accuracy measure. A rejection is not equivalent to a confirmed incorrect pose; it is a conservative validity decision. Report coverage and trajectory error together.
 
 Per-update wall time includes grayscale conversion, feature detection, tracking, depth backprojection, pose estimation, and state update. It excludes image acquisition/rendering, corruption generation, evaluation, video encoding, and reporting. The initialization step is excluded from timing summaries. P95 uses NumPy's default percentile interpolation. The bar chart aggregates per-run metrics using the arithmetic mean and population standard deviation across seeds for each scene, condition, and estimator.
 
@@ -67,7 +75,7 @@ Per-update wall time includes grayscale conversion, feature detection, tracking,
 
 `results.json` records settings, software versions, methodology, and all run metrics. `results.csv` gives the same metrics in tabular form. Each trajectory CSV has original frame index, timestamp, validity flag, track/inlier counts, timing, reason, and the full `T_first_current` matrix. Each ground-truth JSON contains camera calibration, world camera transforms, and timestamps.
 
-The offline report embeds the trajectories in JSON. Its 3D viewer transforms estimates into the world frame using the initial true camera transform for display only. The recorded video shows the first scene and seed, with the same fixed top-view scale across conditions.
+The offline report embeds trajectories, acceptance flags, and reasons in JSON and displays status at the replay timestamp. Charts and metric cards use the modes present in the data, supporting both historical two-mode results and the three-mode experiment. Its 3D viewer transforms estimates into the world frame using the initial true camera transform for display only. The recorded video shows all three trajectories for the first scene and seed and overlays recovery reference tracks. One top-view scale includes all displayed modes and conditions. The GIF preview uses that recording's blackout condition.
 
 ## Validation and remaining limitations
 

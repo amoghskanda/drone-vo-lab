@@ -19,16 +19,16 @@ CASES = {
     "frame_drop": "Keep every nth synchronized RGB-D frame, preserving timestamps",
     "blackout": "Black RGB frames from 40 to 55% of the flight; depth unchanged",
 }
-MODES = ("baseline", "checked")
+MODES = ("baseline", "checked", "recovery")
 
 
 def perturb(sequence: Sequence, case: str, frame_interval):
     if case not in CASES:
         raise ValueError(f"Unknown corruption: {case}")
     indices = np.arange(len(sequence.rgb))
-    #customized to take every nth frame.
+    # customized to take every nth frame.
     if case == "frame_drop" and frame_interval is not None:
-        indices = indices[::int(frame_interval)]
+        indices = indices[:: int(frame_interval)]
     images = sequence.rgb[indices].copy()
     if case == "motion_blur":
         kernel = np.zeros((21, 21), dtype=np.float32)
@@ -39,10 +39,18 @@ def perturb(sequence: Sequence, case: str, frame_interval):
     return indices, images
 
 
-def run_sequence(sequence: Sequence, case: str, mode: str, frame_interval: int) -> tuple[dict, list, np.ndarray]:
+def run_sequence(
+    sequence: Sequence,
+    case: str,
+    mode: str,
+    frame_interval: int,
+    max_recovery_failures: int = 30,
+) -> tuple[dict, list, np.ndarray]:
     indices, images = perturb(sequence, case, frame_interval=frame_interval)
     cv2.setRNGSeed(0)
-    estimator = RGBDOdometry(sequence.calibration, mode)
+    estimator = RGBDOdometry(
+        sequence.calibration, mode, max_recovery_failures=max_recovery_failures
+    )
     estimates = [
         estimator.update(image, sequence.depth[index])
         for image, index in zip(images, indices, strict=True)
@@ -57,6 +65,8 @@ def run_sequence(sequence: Sequence, case: str, mode: str, frame_interval: int) 
             "seed": sequence.seed,
             "case": case,
             "estimator": mode,
+            "recovered_updates": sum(e.reason == "recovered" for e in estimates),
+            "reanchors": sum(e.reason.startswith("reanchored") for e in estimates),
             "median_processing_ms": float(np.median(latency)),
             "p95_processing_ms": float(np.percentile(latency, 95)),
         }
@@ -105,6 +115,7 @@ def run_benchmark(
     height: int = 240,
     video: bool = True,
     frame_interval: int = 4,
+    max_recovery_failures: int = 30,
 ):
     from .report import build_report, render_demo
 
@@ -130,7 +141,9 @@ def run_benchmark(
                 demo = (sequence, {})
             for case in CASES:
                 for mode in MODES:
-                    metrics, estimates, indices = run_sequence(sequence, case, mode, frame_interval)
+                    metrics, estimates, indices = run_sequence(
+                        sequence, case, mode, frame_interval, max_recovery_failures
+                    )
                     rows.append(metrics)
                     stem = f"{scene}-{seed}-{case}-{mode}"
                     save_trajectory(trajectories / f"{stem}.csv", sequence, estimates, indices)
@@ -149,6 +162,7 @@ def run_benchmark(
                             "time": sequence.timestamps[indices].tolist(),
                             "accepted": [e.accepted for e in estimates],
                             "inliers": [e.inliers for e in estimates],
+                            "reasons": [e.reason for e in estimates],
                         }
                     )
                     if demo[0] is sequence:
@@ -167,7 +181,9 @@ def run_benchmark(
             "fps": fps,
             "width": width,
             "height": height,
-            "frame interval": frame_interval
+            "frame_interval": frame_interval,
+            "max_recovery_failures": max_recovery_failures,
+            "estimators": list(MODES),
         },
         "environment": {
             "platform": platform.platform(),
@@ -184,8 +200,13 @@ def run_benchmark(
             "alignment": "Initial camera frame only, no fitted rotation, translation, or scale",
             "failures": "Hold last pose on rejected updates; include held poses in RMSE",
             "models": "Classical RGB-D VO; no learned model, loop closure, IMU, or relocalization",
-            "comparison": "Same inputs, 500 Shi-Tomasi corners, LK, and RANSAC PnP in both modes; "
-            "checked adds forward/backward flow and inlier-support checks",
+            "comparison": "Same inputs, 500 Shi-Tomasi corners, LK, and RANSAC PnP in all modes; "
+            "checked and recovery add forward/backward flow and inlier-support checks",
+            "recovery": "Retain the reference on rejection; accepted gap-spanning estimates "
+            "are labeled recovered. After max_recovery_failures rejected observations, "
+            "re-anchor at the held pose and label the unrecovered gap. Past poses are unchanged.",
+            "events": "recovered_updates counts accepted estimates after failures; reanchors "
+            "counts expired references. Neither count guarantees ground-truth correctness.",
             "runtime": "Estimator-only wall time, excluding rendering, corruption, plotting and encoding",
         },
     }

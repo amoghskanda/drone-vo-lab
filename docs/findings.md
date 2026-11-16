@@ -1,6 +1,6 @@
 # Findings from the recorded experiment
 
-The experiment used two procedural scenes, three seeds, four sensor conditions, and two estimator configurations. Each source flight had 180 RGB-D frames at 320 × 240 and 15 Hz. The camera traveled about 15 meters. Motion was scripted; depth had no added sensor noise. See `artifacts/results.json` for the exact environment and `artifacts/trajectories/` for the full pose logs.
+The experiment used two procedural scenes, three seeds, four sensor conditions, and three estimator configurations, for 72 runs. Each source flight had 180 RGB-D frames at 320 × 240 and 15 Hz. The camera traveled about 15 meters. Motion was scripted; depth had no added sensor noise. See `artifacts/results.json` for the exact environment and `artifacts/trajectories/` for the full pose logs.
 
 ## Rejecting an update can be better than integrating it
 
@@ -18,15 +18,27 @@ Rejected increments hold the previous pose and still count toward RMSE. The resu
 
 ## Additional checks are not a universal improvement
 
-For clean warehouse flights, the baseline averaged 0.163 m position RMSE and the checked variant averaged 0.182 m. Both accepted every update. The checked pipeline also required more CPU time. For the recorded runs, mean per-run median processing time in this condition was 1.50 ms for the baseline and 2.32 ms for the checked variant.
+For clean warehouse flights, the baseline averaged 0.163 m position RMSE and the checked variant averaged 0.182 m. Both accepted every update. The checked pipeline also required more CPU time. For the recorded runs, mean per-run median processing time in this condition was 1.48 ms for the baseline and 2.25 ms for the checked variant.
 
 Under low-texture blur, the checked variant improved seed 0 but worsened seeds 1 and 2. The aggregate mean alone hides that variation. Both individual seeds and mean/standard-deviation plots are included in the report.
 
-## Tracking resumption does not restore lost displacement
+## Recovery can bridge a gap, but can also accept a large wrong motion
 
-The blackout condition removes RGB information for 15% of the flight. After images return, the estimator can redetect features and resume frame-to-frame motion estimation. It cannot recover displacement from the unavailable increments, so the accumulated path retains an offset.
+Recovery retains its reference after rejected updates, uses the same consistency/support checks as checked, and re-anchors after 30 consecutive rejections. It does not receive true poses or revise earlier held estimates.
 
-This is expected for adjacent-frame odometry without inertial propagation, loop closure, or relocalization. The benchmark exposes that distinction through held poses, validity flags, and trajectory error.
+Warehouse blackout results show both outcomes:
+
+| Seed | Checked RMSE | Recovery RMSE | Recovery events | Re-anchors |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 0.739 m | 9.845 m | 1 | 0 |
+| 1 | 0.720 m | 9.860 m | 1 | 0 |
+| 2 | 0.738 m | 0.297 m | 1 | 0 |
+
+All three runs accept a gap-spanning estimate at source frame 99. Seed 2 improves, but seeds 0 and 1 accept movements of about 7.2 meters and rotations of about 171 degrees. Those incorrect estimates produce large subsequent drift despite passing the existing consistency and inlier-support gates. The event label `recovered` records algorithm acceptance, not ground-truth correctness. This exposes a limitation of retained-reference recovery with the current checks.
+
+For the low-texture blackout condition, recovery's mean RMSE is 1.588 m, compared with 1.725 m for checked. However, all three recovery runs record zero accepted recovery events and two re-anchors each. The lower error in those runs must not be described as successful displacement recovery; it reflects different reference and rejection behavior. Other low-texture conditions favor checked over recovery on average.
+
+Baseline and checked resume local tracking after a blackout without recovering missed displacement. Recovery can bridge a gap when matching remains reliable, but it is experimental and is not consistently better. The short synthetic image-shift test verifies successful pose composition across a gap; it does not establish reliable recovery in these larger scenes.
 
 ## Limits of the findings
 

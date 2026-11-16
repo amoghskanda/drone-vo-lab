@@ -167,6 +167,10 @@
         font-size: 11px;
         margin-top: 8px;
       }
+      .metric-values { display: grid; gap: 5px; }
+      .metric-value { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .metric-value span { font-size: 11px; }
+      .links, .legend { flex-wrap: wrap; }
       .blue {
         color: var(--blue);
       }
@@ -386,15 +390,7 @@
             >Trajectory replay
             <span style="color: var(--muted)">/ drag to orbit</span></span
           >
-          <div class="legend">
-            <span
-              ><i class="dot" style="background: #c7d1da"></i>Ground truth</span
-            ><span class="blue"
-              ><i class="dot" style="background: var(--blue)"></i>Baseline</span
-            ><span class="green"
-              ><i class="dot" style="background: var(--green)"></i>Checked</span
-            >
-          </div>
+          <div class="legend" id="legend"></div>
         </div>
         <canvas
           id="trajectory"
@@ -413,8 +409,9 @@
           /><output id="time"></output><button id="reset">Reset view</button>
         </div>
       </div>
+      <p class="note" id="tracking-status" aria-live="polite"></p>
       <p class="note">
-        Both estimators use the same input frames. Rejected updates hold the
+        All estimators use the same input frames. Rejected updates hold the
         previous pose and remain in the position error. Initial camera-frame
         alignment only.
       </p>
@@ -426,7 +423,7 @@
           </video>
           <p class="note">
             Four conditions on the first scene and seed. The RGB image shows
-            tracks used by the checked estimator. Camera motion is prescribed,
+            reference tracks for the highlighted estimator. Camera motion is prescribed,
             not autonomously controlled.
           </p>
         </section>
@@ -441,16 +438,24 @@
           <p>
             <span class="green">Checked</span> uses the same pipeline, with
             forward/backward flow rejection and minimum inlier-count and
-            inlier-ratio checks. Neither configuration is assumed to win.
+            inlier-ratio checks.
           </p>
           <p>
-            Both accumulate camera motion in SE(3). The estimator receives only
+            <span style="color: #c5a3ff">Recovery</span> uses the checked pipeline
+            but retains its RGB-D reference after rejection. It attempts to
+            recover motion across the gap. After the configured failure limit,
+            it re-anchors at the held pose and marks the gap as unrecovered.
+            Earlier held poses are never rewritten.
+          </p>
+          <p>
+            All accumulate camera motion in SE(3). The estimator receives only
             RGB, depth, and calibration. It has no access to ground-truth poses,
             scene geometry, or motion commands.
           </p>
           <p>
-            There is no loop closure or relocalization. A blackout can leave a
-            lasting offset even after feature tracking resumes.
+            Recovery needs sufficient overlap with the retained reference.
+            It is not global relocalization or loop closure. Accepted recovery
+            estimates can still be wrong, and blackout gaps can remain lost.
           </p>
         </section>
       </div>
@@ -460,11 +465,13 @@
         Bars show the mean across seeds; whiskers show population standard
         deviation. Position RMSE includes failed updates. Coverage is accepted
         motion updates divided by attempted updates, excluding initialization.
+        Recovered updates count accepted gap-spanning estimates, not verified
+        correct recoveries. Re-anchors mark expired references and unrecovered motion.
       </p>
       <img
         class="plot"
         src="summary.png"
-        alt="Position error and tracking coverage across both estimators and sensor conditions, grouped by scene"
+        alt="Position error and tracking coverage across estimators and sensor conditions, grouped by scene"
       />
       <div class="table-scroll">
         <table>
@@ -475,6 +482,8 @@
               <th>Position RMSE / m</th>
               <th>Rotation RMSE / °</th>
               <th>Coverage</th>
+              <th>Recovered updates</th>
+              <th>Re-anchors</th>
               <th>Median / ms</th>
               <th>P95 / ms</th>
             </tr>
@@ -532,6 +541,13 @@
         );
         if (items.map(String).includes(old)) el.value = old;
       }
+      const modes = unique(data.runs.map((r) => r.estimator));
+      const modeColor = (mode) => data.colors[mode] || "#96a7ba";
+      $("legend").innerHTML =
+        '<span><i class="dot" style="background:#c7d1da"></i>Ground truth</span>' +
+        modes.map((mode) =>
+          `<span style="color:${modeColor(mode)}"><i class="dot" style="background:${modeColor(mode)}"></i>${label(mode)}</span>`
+        ).join("");
       options(scene, unique(data.runs.map((r) => r.scene)));
       options(condition, Object.keys(data.metadata.cases));
       let active = [],
@@ -569,8 +585,7 @@
             String(r.seed) === seed.value &&
             r.case === condition.value,
         );
-        const b = runs.find((r) => r.estimator === "baseline"),
-          c = runs.find((r) => r.estimator === "checked");
+
         const cards = [
           ["POSITION RMSE / m", "position_rmse_m", (v) => v.toFixed(3)],
           ["ROTATION RMSE / deg", "rotation_rmse_deg", (v) => v.toFixed(2)],
@@ -588,7 +603,7 @@
         $("metrics").innerHTML = cards
           .map(
             ([name, key, fmt]) =>
-              `<div class="metric"><p>${name}</p><strong><span class="blue">${fmt(b[key])}</span> <span style="color:#536276;font-size:16px">/</span> <span class="green">${fmt(c[key])}</span></strong><small>baseline / checked</small></div>`,
+              `<div class="metric"><p>${name}</p><div class="metric-values">${runs.map((run) => `<div class="metric-value" style="color:${modeColor(run.estimator)}"><span>${label(run.estimator)}</span><strong>${fmt(run[key])}</strong></div>`).join("")}</div></div>`,
           )
           .join("");
         $("rows").innerHTML = data.runs
@@ -597,7 +612,7 @@
           )
           .map(
             (r) =>
-              `<tr><td>${label(r.case)}</td><td class="${r.estimator === "baseline" ? "blue" : "green"}">${r.estimator}</td><td>${r.position_rmse_m.toFixed(3)}</td><td>${r.rotation_rmse_deg.toFixed(2)}</td><td>${(r.tracking_coverage * 100).toFixed(1)}%</td><td>${r.median_processing_ms.toFixed(2)}</td><td>${r.p95_processing_ms.toFixed(2)}</td></tr>`,
+              `<tr><td>${label(r.case)}</td><td style="color:${modeColor(r.estimator)}">${r.estimator}</td><td>${r.position_rmse_m.toFixed(3)}</td><td>${r.rotation_rmse_deg.toFixed(2)}</td><td>${(r.tracking_coverage * 100).toFixed(1)}%</td><td>${r.recovered_updates ?? 0}</td><td>${r.reanchors ?? 0}</td><td>${r.median_processing_ms.toFixed(2)}</td><td>${r.p95_processing_ms.toFixed(2)}</td></tr>`,
           )
           .join("");
         draw();
@@ -685,12 +700,15 @@
           last = base.time.at(-1),
           t = base.time[0] + progress * (last - base.time[0]);
         line(base.truth, "#465361", 1.5, [4, 5]);
+        const statuses = [];
         for (const flight of active) {
           let n = flight.time.findIndex((v) => v > t);
           if (n < 0) n = flight.time.length;
           n = Math.max(1, n);
           if (flight === base) line(flight.truth.slice(0, n), "#c7d1da", 2);
-          const color = flight.estimator === "baseline" ? "#5daeff" : "#deed8b";
+          const color = modeColor(flight.estimator);
+          const reason = flight.reasons?.[n - 1] || (flight.accepted[n - 1] ? "tracking" : "rejected");
+          statuses.push(`${label(flight.estimator)}: ${reason}`);
           line(flight.estimated.slice(0, n), color, 2.3);
           const p = project(flight.estimated[n - 1]);
           ctx.beginPath();
@@ -703,6 +721,7 @@
         ctx.fillText("WORLD FRAME / METERS", 20, 28);
         ctx.fillText("Drag to orbit · scroll to zoom", 20, h - 18);
         $("time").textContent = t.toFixed(2) + " s";
+        $("tracking-status").textContent = statuses.join(" · ");
       }
       let drag = null;
       canvas.addEventListener("pointerdown", (e) => {

@@ -6,7 +6,9 @@ This project estimates a camera's movement through simulated indoor environments
 
 Built with **Python, OpenCV, and MuJoCo**. Runs locally on a CPU, without pretrained models or external scene downloads.
 
-![Camera replay with tracked features and estimated paths](artifacts/demo.gif)
+![Blackout replay with recovery reference tracks and estimated paths](artifacts/demo.gif)
+
+The preview shows the warehouse blackout test, including an incorrect recovery estimate. See the results below for the tradeoff.
 
 [Results chart](artifacts/summary.png) · [Detailed findings](docs/findings.md) · [Raw results](artifacts/results.csv)
 
@@ -26,7 +28,7 @@ It provides a controlled way to investigate that tradeoff before testing with re
 4. **Estimate movement.** OpenCV tracks image features, such as corners. Their depth gives their 3D positions, which are used to calculate camera translation and rotation. Position and orientation together are called a **pose**. Successive poses form a trajectory.
 5. **Compare against the true path.** The simulator knows the actual camera poses, called **ground truth**. These are used for evaluation, never supplied to the motion estimator.
 
-Both estimator configurations receive exactly the same observations for each condition.
+All three estimator configurations receive exactly the same observations for each condition.
 
 | Condition | What changes |
 | --- | --- |
@@ -44,18 +46,20 @@ flowchart TB
     sim["Simulated camera"] --> conditions["Test conditions"]
     conditions --> baseline["Baseline VO"]
     conditions --> checked["Checked VO"]
+    conditions --> recovery["Recovery VO"]
     baseline --> compare["Compare paths"]
     checked --> compare
+    recovery --> compare
     sim -. "Ground truth" .-> compare
     compare --> results["Results"]
 
     classDef plain fill:#f1f5f9,stroke:#64748b,color:#0f172a
     classDef accent fill:#eff6ff,stroke:#2563eb,color:#172554
     class sim,conditions,baseline,results plain
-    class checked,compare accent
+    class checked,recovery,compare accent
 ```
 
-Both estimators receive the same observations. Ground truth is kept outside motion estimation and used to measure error.
+All estimators receive the same observations. Ground truth is kept outside motion estimation and used to measure error.
 
 See [design decisions](docs/architecture.md) for the reasoning and implementation details.
 
@@ -70,30 +74,33 @@ The **checked** version uses the same pipeline with two additional safeguards:
 
 These checks filter feature matches and accept or reject **motion estimates**. They do not assign a blur score to an entire frame.
 
-If an update fails, either estimator holds its last pose and uses the current image as the reference for the next update. Rejection can prevent a large incorrect movement from entering the trajectory, but it also loses real movement. That missed displacement is not recovered later.
+The **recovery** version uses the same checks but retains its last reference image and depth after rejection. If a later image still matches that reference, it can estimate movement across the gap. After 30 consecutive failed observations by default, it replaces the reference while holding the pose and marks the gap as unrecovered.
+
+Baseline and checked always advance their image reference, so rejected movement remains missing. Recovery attempts to bridge that movement, but it can also accept a wrong match. All modes hold their pose during rejected updates; none rewrites earlier estimates.
 
 ## What did the experiment show?
 
-The recorded experiment contains **48 runs**: two scenes × three seeds × four conditions × two estimators. Each source recording contains 180 frames at 15 frames per second.
+The committed experiment contains **72 runs**: two scenes × three seeds × four conditions × three estimators. Each source recording contains 180 frames at 15 frames per second. Recovery uses a limit of 30 consecutive failed observations.
 
-The table reports **position RMSE**, a measure of the distance between estimated and true positions over a recording. Lower is better; larger mistakes contribute more strongly. Each value is the mean of three runs with different seeds.
+The table reports **position RMSE**, a measure of the distance between estimated and true positions over a recording. Lower is better; larger mistakes contribute more strongly. Each value is the mean across three seeds.
 
-| Scene and condition | Baseline error | Checked error |
-| --- | ---: | ---: |
-| Warehouse, clean | 0.163 m | 0.182 m |
-| Warehouse, blackout | 0.720 m | 0.732 m |
-| Low texture, clean | 1.539 m | 1.404 m |
-| Low texture, dropped frames | 5.822 m | 1.156 m |
+| Scene and condition | Baseline | Checked | Recovery |
+| --- | ---: | ---: | ---: |
+| Warehouse, clean | 0.163 m | 0.182 m | 0.182 m |
+| Warehouse, blackout | 0.720 m | 0.732 m | 6.667 m |
+| Low texture, clean | 1.539 m | 1.404 m | 1.765 m |
+| Low texture, dropped frames | 5.822 m | 1.156 m | 1.958 m |
+| Low texture, blackout | 2.020 m | 1.725 m | 1.588 m |
 
-**The checks reduced mean position RMSE by about 80% in the low-texture, dropped-frame condition.** This is a comparison with the baseline in that specific simulated condition, not an improvement across every test.
+The checked estimator reduces mean position RMSE by about **80%** relative to baseline in the low-texture, dropped-frame condition. This is a result for that specific simulated condition, not every test.
 
-In that condition, the checked estimator accepted 80.3% of motion updates, compared with 100% for the baseline. This percentage is called **tracking coverage**. Held positions after rejected updates still count toward the error, so rejection does not hide difficult timestamps from evaluation. The estimated path is compared from the initial camera frame without fitting it to the true path afterward.
+**Recovery is experimental and does not consistently improve accuracy.** In warehouse blackout seed 2 it reduces RMSE from 0.738 m for checked to 0.297 m. In seeds 0 and 1, it accepts incorrect gap-spanning estimates and RMSE rises to about 9.85 m. An accepted recovery event means the algorithm's checks passed, not that the recovered movement was correct.
 
-The simpler baseline performed better in the clean warehouse. The extra checks also take more processing time. Both accuracy and coverage matter when deciding whether a safeguard helps.
+We report error alongside **tracking coverage**, the percentage of accepted motion updates. Held poses after rejection still count toward error. A successful recovery may span several observations, so coverage is not the percentage of physical movement recovered. Comparisons use only initial-frame alignment, without fitting estimates to the true path.
 
 ![Position error and tracking coverage across conditions](artifacts/summary.png)
 
-See the [findings](docs/findings.md) for individual-seed results and the [methodology](docs/methodology.md) for equations, algorithm settings, timing, and evaluation details.
+See the [findings](docs/findings.md) for per-seed recovery results and the [methodology](docs/methodology.md) for algorithm settings, event definitions, timing, and evaluation details.
 
 ## Run it locally
 
@@ -108,7 +115,7 @@ pip install -e '.[dev]'
 drone-vo benchmark --quick --output runs/demo
 ```
 
-The quick run uses one scene, one seed, and 90 frames, testing both estimators under all four conditions. It is a smaller experiment than the 48-run results above.
+The quick run uses one scene, one seed, and 90 frames, testing all three estimators under all four conditions for 12 runs. It is a smaller experiment than the 72-run results above.
 
 Open `runs/demo/index.html` in your browser to explore the trajectories and results. On macOS:
 
@@ -132,7 +139,9 @@ The committed results use the default frame-drop interval of 4. To try a differe
 drone-vo benchmark --quick --frame-interval 2 --output runs/interval-2
 ```
 
-This keeps frames 0, 2, 4, and so on in the dropped-frame condition, preserving their original timestamps. The interval must be a positive integer that leaves at least two observations. Without `--output`, runs are saved in a timestamped folder under `runs/`.
+Set the recovery window with `--max-recovery-failures 15`, for example. This counts rejected observations, not seconds, and is recorded in the experiment metadata. Per-frame logs record successful recovery and reference expiry; summary metrics count both types of event.
+
+`--frame-interval 2` keeps frames 0, 2, 4, and so on in the dropped-frame condition, preserving their original timestamps. The interval must be a positive integer that leaves at least two observations. Without `--output`, runs are saved in a timestamped folder under `runs/`.
 
 <details>
 <summary>Installation and rendering notes</summary>
@@ -183,8 +192,8 @@ RUN_RENDER_TESTS=1 pytest
 
 ## Scope and limitations
 
-This is classical RGB-D visual odometry evaluated on small synthetic scenes. The current implementation has no learned model, inertial sensor fusion, or mechanism to revisit known places and correct accumulated drift. Tracking can resume after a blackout while the trajectory retains an offset from missed movement.
+This is classical RGB-D visual odometry evaluated on small synthetic scenes. The current implementation has no learned model, inertial sensor fusion, or mechanism to revisit known places and correct accumulated drift. Recovery requires overlapping views and reliable matching to its retained reference. It can produce large errors in repetitive scenes; reference expiry restarts local tracking without recovering the lost displacement.
 
-Depth has no added sensor noise, blur is an image filter, and camera movement is scripted. Results establish behavior on these recordings; real-flight accuracy and onboard performance remain untested. The two safeguards are evaluated together, so their individual contributions have not been isolated.
+Depth has no added sensor noise, blur is an image filter, and camera movement is scripted. Results establish behavior on these recordings; real-flight accuracy and onboard performance remain untested. The two consistency/support safeguards are evaluated together, so their individual contributions have not been isolated.
 
 Original procedural scenes and estimator integration. No external meshes, datasets, or trained models are bundled. [MIT license](LICENSE).

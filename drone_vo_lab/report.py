@@ -17,8 +17,8 @@ from .geometry import inverse
 
 BACKGROUND = (13, 19, 27)
 TRUTH = (199, 209, 218)
-BASELINE = (93, 174, 255)
-CHECKED = (222, 237, 139)
+MODE_COLORS = {"baseline": "#5daeff", "checked": "#deed8b", "recovery": "#c5a3ff"}
+MODE_RGB = {mode: tuple(bytes.fromhex(color[1:])) for mode, color in MODE_COLORS.items()}
 
 
 def summary_plot(output: Path, rows: list[dict]):
@@ -39,6 +39,8 @@ def summary_plot(output: Path, rows: list[dict]):
     )
     fig, axes = plt.subplots(len(scenes), 2, figsize=(12, 4 * len(scenes)), squeeze=False)
     x = np.arange(len(CASES))
+    modes = [mode for mode in MODES if any(row["estimator"] == mode for row in rows)]
+    bar_width = 0.8 / len(modes)
     for row_index, scene in enumerate(scenes):
         for col, (metric, ylabel) in enumerate(
             [
@@ -47,7 +49,7 @@ def summary_plot(output: Path, rows: list[dict]):
             ]
         ):
             ax = axes[row_index, col]
-            for mode_index, mode in enumerate(MODES):
+            for mode_index, mode in enumerate(modes):
                 groups = [
                     [
                         r[metric]
@@ -60,11 +62,11 @@ def summary_plot(output: Path, rows: list[dict]):
                 means = np.array([np.mean(group) for group in groups]) * scale
                 stds = np.array([np.std(group, ddof=0) for group in groups]) * scale
                 ax.bar(
-                    x + (mode_index - 0.5) * 0.34,
+                    x + (mode_index - (len(modes) - 1) / 2) * bar_width,
                     means,
-                    0.32,
+                    bar_width * 0.94,
                     label=mode,
-                    color=["#5daeff", "#deed8b"][mode_index],
+                    color=MODE_COLORS[mode],
                     yerr=stds,
                     capsize=3,
                     error_kw={"ecolor": "#d9e1eb", "elinewidth": 1},
@@ -102,6 +104,18 @@ def render_demo(output: Path, sequence, results: dict, fps: float, frame_interva
     relative_truth = inverse(sequence.poses[0])[None] @ sequence.poses
     gif_frames = []
     count = 0
+    available_modes = [mode for mode in MODES if (next(iter(CASES)), mode) in results]
+    track_mode = "recovery" if "recovery" in available_modes else "checked"
+    all_paths = [truth]
+    for estimates, _ in results.values():
+        all_paths.append(
+            (sequence.poses[0][None] @ np.array([e.pose for e in estimates]))[:, :3, 3]
+        )
+    all_points = np.concatenate(all_paths)[:, :2]
+    lower, upper = all_points.min(axis=0) - 0.5, all_points.max(axis=0) + 0.5
+    center = (lower + upper) / 2
+    plot_scale = min(480 / (upper[0] - lower[0]), 430 / (upper[1] - lower[1]))
+    grid_step = max(1, int(np.ceil(max(upper - lower) / 12)))
     with imageio.get_writer(
         output / "demo.mp4",
         fps=fps,
@@ -112,23 +126,26 @@ def render_demo(output: Path, sequence, results: dict, fps: float, frame_interva
     ) as writer:
         for case in CASES:
             indices, images = perturb(sequence, case, frame_interval=frame_interval)
-            modes = {mode: results[(case, mode)][0] for mode in MODES}
+            modes = {mode: results[(case, mode)][0] for mode in available_modes}
             world = {
                 mode: (sequence.poses[0][None] @ np.array([e.pose for e in modes[mode]]))[:, :3, 3]
-                for mode in MODES
+                for mode in available_modes
             }
 
             def project(points):
-                # Shared fixed bounds keep scale comparable across all stress conditions.
+                # One scale includes every mode and condition, including large drift.
                 return np.column_stack(
-                    [980 + points[:, 0] * 49, 560 - (points[:, 1] + 5) * 39]
+                    [
+                        980 + (points[:, 0] - center[0]) * plot_scale,
+                        360 - (points[:, 1] - center[1]) * plot_scale,
+                    ]
                 ).astype(np.int32)
 
             for frame_index in range(len(sequence.rgb)):
                 selected = max(0, int(np.searchsorted(indices, frame_index, side="right") - 1))
                 image = images[selected].copy()
-                estimate = modes["checked"][selected]
-                color = CHECKED if estimate.accepted else (255, 139, 112)
+                estimate = modes[track_mode][selected]
+                color = MODE_RGB[track_mode] if estimate.accepted else (255, 139, 112)
                 for before, after in zip(
                     estimate.previous_pixels[::2], estimate.pixels[::2], strict=True
                 ):
@@ -142,41 +159,47 @@ def render_demo(output: Path, sequence, results: dict, fps: float, frame_interva
                     )
                     cv2.circle(image, tuple(np.rint(after).astype(int)), 2, color, -1, cv2.LINE_AA)
                 canvas = np.full((720, 1280, 3), BACKGROUND, dtype=np.uint8)
-                _text(canvas, "DRONE VO LAB", (32, 38), 0.72, CHECKED, 2)
+                _text(canvas, "DRONE VO LAB", (32, 38), 0.72, MODE_RGB[track_mode], 2)
                 _text(canvas, "RGB-D ODOMETRY / CONTROLLED SENSOR FAILURES", (272, 36), 0.52)
                 cv2.line(canvas, (32, 59), (1248, 59), (45, 57, 73), 1)
                 _text(canvas, case.replace("_", " ").upper(), (32, 94), 0.70, (239, 244, 249), 2)
+                status = (
+                    "reanchored; gap unrecovered"
+                    if estimate.reason.startswith("reanchored")
+                    else estimate.reason
+                )
                 _text(
                     canvas,
-                    f"T+{sequence.timestamps[indices[selected]]:05.2f}s   |   {estimate.inliers} inliers   |   {estimate.reason}",
+                    f"T+{sequence.timestamps[indices[selected]]:05.2f}s | {estimate.inliers} inliers | {status}",
                     (32, 636),
-                    0.59,
+                    0.46,
                     color,
                 )
                 canvas[120:600, 32:672] = cv2.resize(
                     image, (640, 480), interpolation=cv2.INTER_NEAREST
                 )
-                _text(canvas, "ONBOARD RGB / CHECKED TRACKS", (32, 116), 0.40)
+                _text(canvas, f"RGB / {track_mode.upper()} REFERENCE TRACKS", (32, 116), 0.40)
                 _text(canvas, "TRAJECTORY / TOP VIEW", (724, 116), 0.40)
-                for x in range(-4, 5):
-                    line = project(np.array([[x, -5, 0], [x, 5, 0]]))
+                for x in np.arange(np.floor(lower[0]), np.ceil(upper[0]) + 1, grid_step):
+                    line = project(np.array([[x, lower[1], 0], [x, upper[1], 0]]))
                     cv2.line(canvas, tuple(line[0]), tuple(line[1]), (30, 40, 52), 1)
-                for y in range(-5, 6):
-                    line = project(np.array([[-4, y, 0], [4, y, 0]]))
+                for y in np.arange(np.floor(lower[1]), np.ceil(upper[1]) + 1, grid_step):
+                    line = project(np.array([[lower[0], y, 0], [upper[0], y, 0]]))
                     cv2.line(canvas, tuple(line[0]), tuple(line[1]), (30, 40, 52), 1)
                 cv2.polylines(canvas, [project(truth)], False, (63, 73, 85), 2, cv2.LINE_AA)
                 gt_index = indices[selected]
                 cv2.polylines(
                     canvas, [project(truth[: gt_index + 1])], False, TRUTH, 2, cv2.LINE_AA
                 )
-                for mode, line_color in [("baseline", BASELINE), ("checked", CHECKED)]:
+                for mode_index, mode in enumerate(available_modes):
+                    line_color = MODE_RGB[mode]
                     points = project(world[mode][: selected + 1])
                     cv2.polylines(canvas, [points], False, line_color, 2, cv2.LINE_AA)
                     cv2.circle(canvas, tuple(points[-1]), 5, line_color, -1, cv2.LINE_AA)
                     error = np.linalg.norm(
                         modes[mode][selected].pose[:3, 3] - relative_truth[gt_index, :3, 3]
                     )
-                    y = 651 if mode == "baseline" else 680
+                    y = 630 + 27 * mode_index
                     _text(
                         canvas,
                         f"{mode.upper():8}  position error {error:.3f} m",
@@ -195,7 +218,7 @@ def render_demo(output: Path, sequence, results: dict, fps: float, frame_interva
                 writer.append_data(canvas)
                 if count == 30:
                     imageio.imwrite(output / "preview.png", canvas)
-                if case == "clean" and frame_index % 3 == 0:
+                if case == "blackout" and frame_index % 3 == 0:
                     gif_frames.append(cv2.resize(canvas, (768, 432), interpolation=cv2.INTER_AREA))
                 count += 1
     imageio.mimsave(output / "demo.gif", gif_frames, duration=3 / fps * 1000, loop=0)
@@ -203,7 +226,10 @@ def render_demo(output: Path, sequence, results: dict, fps: float, frame_interva
 
 def build_report(output: Path, rows: list[dict], flights: list[dict], metadata: dict):
     summary_plot(output, rows)
-    payload = json.dumps({"runs": rows, "flights": flights, "metadata": metadata}, allow_nan=False)
+    payload = json.dumps(
+        {"runs": rows, "flights": flights, "metadata": metadata, "colors": MODE_COLORS},
+        allow_nan=False,
+    )
     template = Path(__file__).with_name("report.html").read_text()
     if not metadata.get("video_rendered", True):
         template = re.sub(r'<section id="sensor-replay">.*?</section>', "", template, flags=re.S)

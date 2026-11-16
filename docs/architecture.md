@@ -7,7 +7,7 @@ The project separates observation generation, motion estimation, evaluation, and
 | Decision | Implementation | Reason and tradeoff |
 | --- | --- | --- |
 | Keep the estimator independent of simulation | `RGBDOdometry` receives calibration, color images, and depth. It does not import MuJoCo or receive true poses. | Accuracy is measured against information the estimator did not have. A future recorded RGB-D input could use the same estimator interface, but that loader is not implemented yet. |
-| Compare both modes on the same observations | Capture one sequence for each scene and seed. Derive each observation variant from it, then run both estimators on that variant. | Differences reflect estimator behavior under matched inputs. Both modes share feature tracking and pose estimation; the checked mode adds two safeguards. |
+| Compare all modes on the same observations | Capture one sequence for each scene and seed. Derive each observation variant from it, then run all estimators on that variant. | Differences reflect estimator behavior under matched inputs. All modes share tracking and pose estimation. Checked adds two safeguards; recovery uses those checks with bounded reference retention. |
 | Make rejection explicit | Every update returns an `Estimate` with a pose, acceptance flag, reason, and diagnostic counts. Rejected updates hold the last pose. | Rejecting a bad increment can prevent large drift. Rejecting a good increment loses real movement. Both remain visible in the results. |
 | Measure accuracy together with coverage | Evaluation includes held poses in error and reports the proportion of accepted updates. Only the initial coordinate frame is aligned. | Rejecting difficult updates cannot remove their timestamps from error measurement. There is no trajectory fitting or reset to ground truth. |
 | Keep reporting outside estimator timing | `update()` times estimator work. The runner evaluates and saves results; `report.py` builds plots, the report, and optional replay files afterward. | Processing times describe the estimator rather than rendering or encoding. They do not establish end-to-end onboard performance. |
@@ -23,7 +23,7 @@ flowchart TB
     motion --> accept{"Accept motion?"}
     accept -->|"Yes"| integrate["Update pose"]
     accept -->|"No"| hold["Hold pose"]
-    integrate --> next["Advance frame reference"]
+    integrate --> next["Update or retain reference"]
     hold --> next
     next --> result["Pose + status"]
 
@@ -37,9 +37,9 @@ flowchart TB
 
 The diagram groups failure paths. Missing features, failed optical flow, or failed PnP also lead to a held pose. On the first observation, the estimator stores the image and depth and initializes its pose to identity. That initialization is excluded from tracking coverage and timing summaries.
 
-Both modes require at least six PnP inliers, which are feature correspondences supporting the estimated motion. The checked mode additionally keeps forward/backward discrepancies below 0.8 pixels and requires at least 12 inliers with an inlier fraction of at least 35%.
+All modes require at least six PnP inliers, which are feature correspondences supporting the estimated motion. Checked and recovery additionally keep forward/backward discrepancies below 0.8 pixels and requires at least 12 inliers with an inlier fraction of at least 35%.
 
-After a rejected `A → B` update, the next attempt is `B → C`. Both image and depth references advance even when the pose does not. The implementation does not recover the displacement missed between A and B.
+After a rejected `A → B` update, baseline and checked next attempt `B → C`. Recovery retains A and attempts `A → C`, composing a successful estimate from A's held pose. After the configured failure limit, recovery adopts the current observation as a new reference without changing the pose, marks the gap as unrecovered, and resets its failure counter. Accepted recovery never rewrites previous held estimates.
 
 ## Data passed between modules
 
@@ -63,10 +63,12 @@ Each `RGBDOdometry` object owns its own state:
 
 ```text
 calibration       3 × 3 camera matrix, copied at initialization
-mode              "baseline" or "checked"
+mode              "baseline", "checked", or "recovery"
 pose              4 × 4 accumulated camera pose, initially identity
-previous_gray     H × W previous grayscale image, initially None
-previous_depth    H × W previous depth image, initially None
+previous_gray     H × W reference grayscale image, initially None
+previous_depth    H × W matching reference depth, initially None
+recovery_failures  consecutive rejected observations, initially 0
+max_recovery_failures  positive limit before re-anchoring, default 30
 ```
 
 `Estimate` is a separate dataclass returned by an update, not the estimator's persistent state. Its pose is copied so later updates do not alter earlier pose snapshots.
@@ -74,7 +76,7 @@ previous_depth    H × W previous depth image, initially None
 `T_a_b` maps points from coordinate frame b to coordinate frame a. PnP estimates the previous camera's 3D points expressed in the current camera frame. Camera pose accumulation therefore uses its inverse:
 
 ```text
-T_first_current = T_first_previous @ inverse(T_current_previous)
+T_first_current = T_first_reference @ inverse(T_current_reference)
 ```
 
 See [geometry.py](../drone_vo_lab/geometry.py) and the [methodology](methodology.md) for camera axes, depth conventions, and metric definitions.

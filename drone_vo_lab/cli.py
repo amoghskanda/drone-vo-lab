@@ -2,12 +2,15 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+
 def main():
     parser = argparse.ArgumentParser(description="RGB-D visual odometry stress tests in MuJoCo")
     sub = parser.add_subparsers(dest="command", required=True)
     bench = sub.add_parser("benchmark", help="Capture, evaluate, and write a self-contained report")
-    bench.add_argument("--output", type=Path, default=Path("runs") / datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-    #custom scenes can be added and configured here. the default for now are warehouse and low texture.
+    bench.add_argument(
+        "--output", type=Path, default=Path("runs") / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    )
+    # custom scenes can be added and configured here. the default for now are warehouse and low texture.
     bench.add_argument(
         "--scenes",
         nargs="+",
@@ -15,6 +18,12 @@ def main():
         default=["warehouse", "low_texture"],
     )
     bench.add_argument("--frame-interval", type=int, default=4)
+    bench.add_argument(
+        "--max-recovery-failures",
+        type=int,
+        default=30,
+        help="Rejected observations before recovery re-anchors at its held pose",
+    )
     bench.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     bench.add_argument("--frames", type=int, default=180)
     bench.add_argument("--fps", type=float, default=15)
@@ -23,9 +32,11 @@ def main():
     bench.add_argument("--no-video", action="store_true")
     bench.add_argument("--quick", action="store_true", help="One scene, one seed, 90 frames")
     args = parser.parse_args()
-    
+
     effective_frames = min(args.frames, 90) if args.quick else args.frames
 
+    if args.max_recovery_failures <= 0:
+        parser.error("max recovery failures must be a positive integer")
     if args.frame_interval <= 0:
         parser.error(" frame interval must be a positive integer")
     if args.frame_interval >= effective_frames:
@@ -37,13 +48,14 @@ def main():
     from .benchmark import run_benchmark
 
     run_benchmark(
-        args.output,
-        ["warehouse"] if args.quick else list(dict.fromkeys(args.scenes)),
-        [0] if args.quick else list(dict.fromkeys(args.seeds)),
-        effective_frames,
-        args.fps,
-        args.width,
-        args.height,
-        not args.no_video,
-        args.frame_interval,
+        output=args.output,
+        scenes=["warehouse"] if args.quick else list(dict.fromkeys(args.scenes)),
+        seeds=[0] if args.quick else list(dict.fromkeys(args.seeds)),
+        frames=effective_frames,
+        fps=args.fps,
+        width=args.width,
+        height=args.height,
+        video=not args.no_video,
+        frame_interval=args.frame_interval,
+        max_recovery_failures=args.max_recovery_failures,
     )
